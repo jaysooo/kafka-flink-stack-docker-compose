@@ -1,0 +1,162 @@
+version: '3'
+
+networks:
+  jssvs-net:
+    external: true
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:${CONFLUENT_VERSION}
+    hostname: zookeeper
+    restart: on-failure
+    ports:
+      - 2181:2181
+    volumes:
+      - ./zookeeper/data:/data
+      - ./zookeeper/logs:/datalog
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - jssvs-net
+
+  kafka-1:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
+    hostname: kafka-1
+    restart: on-failure
+    ports:
+      - 9091:9091
+    depends_on:
+      - zookeeper
+    volumes:
+      - ./kafka-1/data:/var/lib/kafka/data
+    environment:
+      KAFKA_BROKER_ID: 101
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:29092,EXTERNAL://localhost:9091
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9091
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+    networks:
+      - jssvs-net
+  kafka-2:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
+    hostname: kafka-2
+    restart: on-failure
+    ports:
+      - 9092:9092
+    depends_on:
+      - zookeeper
+    volumes:
+      - ./kafka-2/data:/var/lib/kafka/data
+    environment:
+      KAFKA_BROKER_ID: 102
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-2:29092,EXTERNAL://localhost:9092"
+      KAFKA_LISTENERS: "INTERNAL://:29092,EXTERNAL://:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+    networks:
+      - jssvs-net
+
+  kafka-3:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
+    hostname: kafka-3
+    restart: on-failure
+    ports:
+      - 9093:9093
+    depends_on:
+      - zookeeper
+    volumes:
+      - ./kafka-3/data:/var/lib/kafka/data
+    environment:
+      KAFKA_BROKER_ID: 103
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-3:29092,EXTERNAL://localhost:9093"
+      KAFKA_LISTENERS: "INTERNAL://:29092,EXTERNAL://:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: 'false'
+    networks:
+      - jssvs-net
+
+
+
+  manager:
+    image: obsidiandynamics/kafdrop
+    restart: "no"
+    ports:
+      - 9000:9000
+    environment:
+      KAFKA_BROKERCONNECT: kafka-1:29092
+      JVM_OPTS: "-Xms16M -Xmx48M -Xss180K -XX:-TieredCompilation -XX:+UseStringDeduplication -noverify"
+    depends_on:
+      - zookeeper
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    networks:
+      - jssvs-net
+
+  jobmanager:
+    image: flink:latest
+    ports:
+      - 8081:8081
+      - 6123:6123
+      - 6124:6124
+    command: jobmanager
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager 
+    networks:
+      - jssvs-net
+
+  taskmanager:
+    image: flink:latest
+    ports:
+      - 6121:6121
+      - 6122:6122
+      - 6125:6125
+    depends_on:
+      - jobmanager
+    command: taskmanager
+    scale: 1
+    volumes:
+      - ./flink:/work
+    links:
+      - "jobmanager:jobmanager"
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+    networks:
+      - jssvs-net
+
+
+  sql-client:
+    image: ftisiot/flink_sql_cli:1.15.0
+    depends_on:
+      - jobmanager
+      - kafka-1
+      - kafka-2
+      - kafka-3
+      - zookeeper
+    command: ./sql-client.sh
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: jobmanager
+      ZOOKEEPER_CONNECT: zookeeper
+      KAFKA_HOST: kafka-1:9091
+      KAFKA_BOOTSTRAP: kafka-1:9091
+      ZOOKEEPER_HOST: zookeeper:2181
+      FLINK_JOBMANAGER_HOST: jobmanager
+
+    networks:
+      - jssvs-net
